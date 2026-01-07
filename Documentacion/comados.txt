@@ -1,0 +1,8 @@
+streamlit run main.py
+docker-compose down
+docker-compose up -d
+pip install streamlit requests python-dotenv Pillow
+
+
+curl -X POST http://localhost:5678/webhook-test/publicar-redes -H "Content-Type: application/json" -d '{"comercio_id":"test"}'
+curl -X POST http://localhost:5678/webhook/publicar-redes -H "Content-Type: application/json" -d '{"001":"panadaria"}'

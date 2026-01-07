@@ -1,0 +1,43 @@
+/* style/style.css */
+
+/* Fondo principal */
+.stApp {
+    background-color: #F0F4F8; /* Azul muy claro */
+}
+
+/* Barra lateral (Menú) */
+[data-testid="stSidebar"] {
+    background-color: #D1E1F0 !important; /* Azul acero claro */
+}
+
+/* Forzar color de letra negro/oscuro en los menús y etiquetas */
+[data-testid="stSidebar"] .stText, 
+[data-testid="stSidebar"] label, 
+[data-testid="stSidebar"] .stMarkdown p {
+    color: #1A202C !important; /* Gris casi negro */
+    font-weight: 500;
+}
+
+/* Título principal */
+.main-title {
+    color: #1E3A8A; /* Azul marino */
+    text-align: center;
+    font-weight: bold;
+}
+
+/* Botones con letras blancas para que se lean bien */
+div.stButton > button {
+    background-color: #3B82F6;
+    color: white !important;
+    border-radius: 8px;
+}
+
+/* Ocultar la barra superior y el botón de Deploy */
+header[data-testid="stHeader"] {
+    visibility: hidden;
+    height: 0%;
+}
+
+/* Ocultar el menú de opciones (hamburguesa) y el footer si lo deseas */
+#MainMenu {visibility: hidden;}
+footer {visibility: hidden;}
