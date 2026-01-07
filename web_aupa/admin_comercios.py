@@ -14,7 +14,7 @@ def main():
     with st.expander(titulo_form, expanded=st.session_state.edit_mode):
         with st.form("form_comercio"):
             v_cid = st.session_state.comercio_a_editar['comercio_id'] if st.session_state.edit_mode else ""
-            v_nom = st.session_state.comercio_a_editar['nombre'] if st.session_state.edit_mode else ""
+            v_nom = st.session_state.comercio_a_editar['nombre_comercio'] if st.session_state.edit_mode else ""
             v_cat = st.session_state.comercio_a_editar['categoria'] if st.session_state.edit_mode else "Tienda"
 
             col1, col2 = st.columns(2)
@@ -55,7 +55,7 @@ def main():
             c1, c2, c3, c4, c5 = st.columns([1, 2, 3, 2, 2])
             c1.write(row['id']) 
             c2.write(row['comercio_id'])
-            c3.write(row['nombre'])
+            c3.write(row['nombre_comercio'])
             c4.write(row['categoria'])
             
             btn_edit, btn_del = c5.columns(2)
