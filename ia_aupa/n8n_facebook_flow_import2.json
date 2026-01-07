@@ -1,0 +1,225 @@
+{
+  "id": "fb-oauth-001",
+  "name": "Social Media OAuth Flow - Facebook",
+  "description": "Flujo de autenticación OAuth para Facebook conectado desde la aplicación web",
+  "active": true,
+  "settings": {},
+  "createdAt": "2026-01-07T00:00:00.000Z",
+  "nodes": [
+    {
+      "parameters": {
+        "path": "facebook-connect",
+        "method": "POST"
+      },
+      "id": "webhook_trigger",
+      "name": "Webhook Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [250, 300]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "name": "platform",
+              "value": "={{$json.platform}}"
+            },
+            {
+              "name": "user_id",
+              "value": "={{$json.user_id}}"
+            },
+            {
+              "name": "user_email",
+              "value": "={{$json.user_email}}"
+            },
+            {
+              "name": "timestamp",
+              "value": "={{$json.timestamp}}"
+            }
+          ]
+        }
+      },
+      "id": "extract_data",
+      "name": "Extract Data",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3,
+      "position": [500, 300]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "name": "client_id",
+              "value": "={{$env.FACEBOOK_APP_ID}}"
+            },
+            {
+              "name": "redirect_uri",
+              "value": "={{$env.FACEBOOK_REDIRECT_URI}}"
+            },
+            {
+              "name": "state",
+              "value": "={{$randomString('randomstring', 'base64url')}}"
+            },
+            {
+              "name": "scopes",
+              "value": "=['pages_manage_metadata', 'pages_read_engagement']"
+            }
+          ]
+        }
+      },
+      "id": "prepare_oauth",
+      "name": "Prepare OAuth",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3,
+      "position": [750, 300]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "name": "oauth_url",
+              "value": "={{'https://www.facebook.com/v18.0/dialog/oauth?client_id=' + $json.client_id + '&redirect_uri=' + encodeURIComponent($json.redirect_uri) + '&state=' + $json.state + '&scope=' + encodeURIComponent($json.scopes.join(','))}}"
+            }
+          ]
+        }
+      },
+      "id": "build_oauth_url",
+      "name": "Build OAuth URL",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3,
+      "position": [1000, 300]
+    },
+    {
+      "parameters": {
+        "operation": "insert",
+        "schema": "public",
+        "table": "connection_requests",
+        "columns": "user_id,platform,email,state,oauth_url,timestamp,status",
+        "fieldsUi": {
+          "fields": [
+            {
+              "columnName": "user_id",
+              "dbFieldName": "user_id",
+              "parameterType": "defineBelow",
+              "value": "={{$json.user_id}}"
+            },
+            {
+              "columnName": "platform",
+              "dbFieldName": "platform",
+              "parameterType": "defineBelow",
+              "value": "={{$json.platform}}"
+            },
+            {
+              "columnName": "email",
+              "dbFieldName": "email",
+              "parameterType": "defineBelow",
+              "value": "={{$json.user_email}}"
+            },
+            {
+              "columnName": "state",
+              "dbFieldName": "state",
+              "parameterType": "defineBelow",
+              "value": "={{$json.state}}"
+            },
+            {
+              "columnName": "oauth_url",
+              "dbFieldName": "oauth_url",
+              "parameterType": "defineBelow",
+              "value": "={{$json.oauth_url}}"
+            },
+            {
+              "columnName": "timestamp",
+              "dbFieldName": "timestamp",
+              "parameterType": "defineBelow",
+              "value": "={{$json.timestamp}}"
+            },
+            {
+              "columnName": "status",
+              "dbFieldName": "status",
+              "parameterType": "defineBelow",
+              "value": "pending"
+            }
+          ]
+        }
+      },
+      "id": "store_request",
+      "name": "Store Connection Request",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2,
+      "position": [1250, 300],
+      "credentials": {
+        "postgres": "postgres_connection"
+      }
+    },
+    {
+      "parameters": {
+        "responseData": "={{{\n  \"success\": true,\n  \"message\": \"Solicitud enviada a \" + $json.platform,\n  \"data\": {\n    \"oauth_url\": $json.oauth_url,\n    \"state\": $json.state,\n    \"request_id\": \"req_\" + Math.random().toString(36).substr(2, 9)\n  }\n}}}"
+      },
+      "id": "return_response",
+      "name": "Return Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [1500, 300]
+    }
+  ],
+  "connections": {
+    "webhook_trigger": {
+      "main": [
+        [
+          {
+            "node": "extract_data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "extract_data": {
+      "main": [
+        [
+          {
+            "node": "prepare_oauth",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "prepare_oauth": {
+      "main": [
+        [
+          {
+            "node": "build_oauth_url",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "build_oauth_url": {
+      "main": [
+        [
+          {
+            "node": "store_request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "store_request": {
+      "main": [
+        [
+          {
+            "node": "return_response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  }
+}

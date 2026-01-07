@@ -1,5 +1,6 @@
 import streamlit as st
 
+
 def local_css(file_name):
     """Carga archivos CSS externos con codificación UTF-8."""
     try:
@@ -43,7 +44,7 @@ def main():
     
     opcion = st.sidebar.radio(
         "Seleccione una herramienta:",
-        ["🏠 Inicio", "🗄️ Gestión de Comercios", "🤖 Gestión IA", "🔍 Test de Conexión"] #
+        ["🏠 Inicio", "🗄️ Gestión de Comercios", "🤖 Gestión IA", "🌐 Redes Sociales", "🔍 Test de Conexión"]
     )
 
     st.sidebar.divider()
@@ -60,7 +61,10 @@ def main():
     elif opcion == "🤖 Gestión IA":
         import gestion_ia
         # Asegúrate de que gestion_ia tenga una función main() o lógica de inicio
-
+    
+    elif opcion == "🌐 Redes Sociales":
+        # Renderiza la interfaz del conector social
+        render_social_connector_ui()
     elif opcion == "🔍 Test de Conexión":
         import test_db
         test_db.ejecutar_test() # Llamamos a la función del archivo de prueba

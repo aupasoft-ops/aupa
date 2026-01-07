@@ -6,3 +6,9 @@ pip install streamlit requests python-dotenv Pillow
 
 curl -X POST http://localhost:5678/webhook-test/publicar-redes -H "Content-Type: application/json" -d '{"comercio_id":"test"}'
 curl -X POST http://localhost:5678/webhook/publicar-redes -H "Content-Type: application/json" -d '{"001":"panadaria"}'
+
+---Abrir consola n8n----
+http://localhost:5678/
+
+docker exec -i n8n_aupa n8n --version || true
+docker logs --tail 200 n8n_aupa || true
