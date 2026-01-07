@@ -1,4 +1,0 @@
-streamlit
-requests
-python-dotenv
-git+https://github.com/ayrshare/social-post-api-python.git
