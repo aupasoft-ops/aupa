@@ -1,0 +1,5 @@
+[server]
+# Ruta relativa desde la carpeta raíz 'Aupa'
+sslCertFile = "certs/localhost.pem"
+sslKeyFile = "certs/localhost-key.pem"
+port = 8501
