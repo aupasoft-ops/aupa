@@ -1,8 +1,12 @@
 import streamlit as st
 import psycopg2
 import os
-from datetime import datetime
+import requests
+import json
+from datetime import datetime, timedelta
 from dotenv import load_dotenv
+import socket
+from audit_logger import audit_logger
 
 load_dotenv()
 
@@ -15,6 +19,76 @@ if "page" not in st.session_state:
 
 def get_db_connection():
     return psycopg2.connect(os.getenv("DATABASE_URL"))
+
+def get_client_ip():
+    """Obtiene la IP del cliente para auditoría."""
+    try:
+        return socket.gethostbyname(socket.gethostname())
+    except Exception:
+        return "0.0.0.0"
+
+def validate_facebook_token(access_token):
+    """Valida que el token de Facebook sea válido y obtiene información del usuario."""
+    try:
+        url = "https://graph.facebook.com/v18.0/me"
+        params = {
+            "access_token": access_token,
+            "fields": "id,name,email"
+        }
+        response = requests.get(url, params=params, timeout=10)
+        
+        if response.status_code == 200:
+            data = response.json()
+            return True, data
+        else:
+            return False, response.json()
+    except Exception as e:
+        return False, {"error": str(e)}
+
+def exchange_facebook_code(code):
+    """Realiza el intercambio del código de autorización por un access_token de Facebook."""
+    try:
+        fb_app_id = os.getenv("FACEBOOK_CLIENT_ID")
+        fb_app_secret = os.getenv("FACEBOOK_CLIENT_SECRET")
+        redirect_uri = os.getenv("REDIRECT_URI", "https://localhost:8501/")
+        
+        if not fb_app_id or not fb_app_secret:
+            return None, "Faltan credenciales de Facebook en variables de entorno", "MISSING_CREDENTIALS"
+        
+        url = "https://graph.facebook.com/v18.0/oauth/access_token"
+        params = {
+            "client_id": fb_app_id,
+            "client_secret": fb_app_secret,
+            "redirect_uri": redirect_uri,
+            "code": code
+        }
+        
+        response = requests.get(url, params=params, timeout=10)
+        
+        if response.status_code == 200:
+            data = response.json()
+            access_token = data.get("access_token")
+            expires_in = data.get("expires_in")
+            
+            # Validar el token obtenido
+            is_valid, user_data = validate_facebook_token(access_token)
+            if is_valid:
+                return access_token, None, None, expires_in, user_data
+            else:
+                error_msg = user_data.get("error", {}).get("message", "Token validation failed")
+                return None, error_msg, "VALIDATION_FAILED"
+        else:
+            error_data = response.json()
+            error_msg = error_data.get("error", {}).get("message", "Unknown error")
+            error_code = error_data.get("error", {}).get("code", "UNKNOWN")
+            return None, error_msg, error_code
+            
+    except requests.exceptions.Timeout:
+        return None, "Timeout en conexión con Facebook", "TIMEOUT"
+    except requests.exceptions.RequestException as e:
+        return None, str(e), "REQUEST_ERROR"
+    except Exception as e:
+        return None, str(e), "UNKNOWN_ERROR"
 
 # Sidebar para navegar
 with st.sidebar:
@@ -81,30 +155,94 @@ elif st.session_state.page == "home":
         platform = st.session_state.get("last_platform", "Desconocida")
         
         st.warning(f"⚠️ Autorización detectada para {platform}.")
+        
+        # Solicitar email del usuario
+        user_email = st.text_input("Ingresa tu correo electrónico:", placeholder="usuario@ejemplo.com")
+        
         if st.button("Confirmar Vinculación"):
-            # NUEVO: Captura exhaustiva de excepciones durante el intercambio
-            try:
-                conn = get_db_connection()
-                cur = conn.cursor()
-                
-                # Simulación de inserción - Aquí es donde capturamos cualquier fallo de DB o lógica
-                cur.execute(
-                    "INSERT INTO social_accounts (user_email, platform, access_token) VALUES (%s, %s, %s)",
-                    ("Usuario_Vinculado", platform, f"token_{code[:10]}")
-                )
-                conn.commit()
-                cur.close()
-                conn.close()
-                st.success(f"¡{platform} configurado con éxito!")
-                st.query_params.clear() 
-                
-            except psycopg2.Error as db_err:
-                st.error(f"❌ Error de Base de Datos al vincular {platform}: {db_err}")
-                st.info("Verifica la conexión con PostgreSQL y que la tabla 'social_accounts' exista.")
-            except Exception as e:
-                # Captura cualquier otro error (Red, errores de lógica, etc.)
-                st.error(f"💥 Se rompió el intercambio de tokens para {platform}: {type(e).__name__}")
-                st.exception(e) # Esto mostrará el rastro del error para debuggear mejor
+            if not user_email or "@" not in user_email:
+                st.error("❌ Por favor ingresa un email válido.")
+            elif platform not in ["Facebook", "Instagram", "TikTok"]:
+                st.error(f"❌ Plataforma no soportada: {platform}")
+            else:
+                with st.spinner(f"🔄 Intercambiando código por token con {platform}..."):
+                    try:
+                        # Paso 1: Intercambiar código por access_token
+                        access_token, error_msg, error_code, expires_in, user_data = exchange_facebook_code(code)
+                        
+                        if not access_token:
+                            st.error(f"❌ Error en intercambio de tokens: {error_msg}")
+                            audit_logger.log_token_exchange(
+                                user_email, platform, code,
+                                status="failed",
+                                error_msg=error_msg,
+                                error_code=error_code
+                            )
+                        else:
+                            # Paso 2: Validar token
+                            is_valid, validation_data = validate_facebook_token(access_token)
+                            
+                            if not is_valid:
+                                st.error("❌ Token inválido después de obtenerlo.")
+                                audit_logger.log_token_exchange(
+                                    user_email, platform, code,
+                                    status="failed",
+                                    error_msg="Token validation failed"
+                                )
+                            else:
+                                # Paso 3: Guardar en base de datos
+                                fb_user_id = user_data.get("id")
+                                
+                                conn = get_db_connection()
+                                cur = conn.cursor()
+                                
+                                cur.execute("""
+                                    INSERT INTO social_accounts 
+                                    (user_email, platform, platform_user_id, access_token, expires_at)
+                                    VALUES (%s, %s, %s, %s, %s)
+                                    RETURNING id
+                                """, (
+                                    user_email,
+                                    platform,
+                                    fb_user_id,
+                                    access_token,
+                                    datetime.now() + timedelta(seconds=int(expires_in)) if expires_in else None
+                                ))
+                                account_id = cur.fetchone()[0]
+                                conn.commit()
+                                
+                                # Paso 4: Registrar en auditoría
+                                audit_logger.log_token_exchange(
+                                    user_email, platform, code,
+                                    access_token=access_token,
+                                    status="success",
+                                    fb_user_id=fb_user_id,
+                                    expires_in=expires_in
+                                )
+                                
+                                cur.close()
+                                conn.close()
+                                
+                                st.success(f"✅ ¡{platform} configurado exitosamente para {user_email}!")
+                                st.info(f"📊 ID de la cuenta: {account_id}")
+                                st.query_params.clear()
+                                st.rerun()
+                    
+                    except psycopg2.Error as db_err:
+                        st.error(f"❌ Error de Base de Datos: {db_err}")
+                        audit_logger.log_token_exchange(
+                            user_email, platform, code,
+                            status="failed",
+                            error_msg=f"Database error: {str(db_err)}"
+                        )
+                    except Exception as e:
+                        st.error(f"💥 Error inesperado: {type(e).__name__}: {str(e)}")
+                        st.exception(e)
+                        audit_logger.log_token_exchange(
+                            user_email, platform, code,
+                            status="failed",
+                            error_msg=f"{type(e).__name__}: {str(e)}"
+                        )
 
     # --- 2. FORMULARIO DE PUBLICACIÓN ---
     st.divider()
@@ -133,28 +271,96 @@ elif st.session_state.page == "home":
     except Exception as e:
         st.error(f"Error de conexión: {e}")
 
-    # --- 3. MONITOR DE ERRORES ---
+    # --- 3. MONITOR DE ERRORES Y AUDITORÍA ---
     st.divider()
-    st.header("3. Monitor de Publicaciones y Errores")
-    if st.button("🔄 Actualizar logs"):
-        try:
-            conn = get_db_connection()
-            cur = conn.cursor()
-            cur.execute("""
-                SELECT q.id, a.platform, q.content, q.status, q.error_message, q.scheduled_at 
-                FROM posts_queue q
-                JOIN social_accounts a ON q.account_id = a.id
-                ORDER BY q.scheduled_at DESC LIMIT 10
-            """)
-            logs = cur.fetchall()
-            if logs:
-                for log in logs:
-                    with st.expander(f"ID: {log[0]} | {log[1]} | Estado: {log[3]}"):
-                        st.write(f"**Contenido:** {log[2]}")
-                        if log[4]: st.error(f"**Error:** {log[4]}")
-            else:
-                st.write("No hay registros.")
-            cur.close()
-            conn.close()
-        except Exception as e:
-            st.error(f"Error al cargar logs: {e}")
+    st.header("3. Monitor de Publicaciones y Auditoría")
+    
+    tab1, tab2, tab3 = st.tabs(["📊 Publicaciones", "🔐 Auditoría de Tokens", "❌ Errores"])
+    
+    with tab1:
+        if st.button("🔄 Actualizar logs de publicaciones"):
+            try:
+                conn = get_db_connection()
+                cur = conn.cursor()
+                cur.execute("""
+                    SELECT q.id, a.platform, q.content, q.status, q.error_message, q.scheduled_at, a.user_email
+                    FROM posts_queue q
+                    JOIN social_accounts a ON q.account_id = a.id
+                    ORDER BY q.scheduled_at DESC LIMIT 20
+                """)
+                logs = cur.fetchall()
+                if logs:
+                    for log in logs:
+                        with st.expander(f"📌 ID: {log[0]} | {log[1]} | Estado: {log[3]} | {log[4]}"):
+                            st.write(f"**Usuario:** {log[6]}")
+                            st.write(f"**Contenido:** {log[2]}")
+                            st.write(f"**Programado:** {log[5]}")
+                            if log[4]: 
+                                st.error(f"**Error:** {log[4]}")
+                else:
+                    st.write("No hay registros de publicaciones.")
+                cur.close()
+                conn.close()
+            except Exception as e:
+                st.error(f"Error al cargar logs: {e}")
+    
+    with tab2:
+        if st.button("🔄 Actualizar logs de intercambio de tokens"):
+            try:
+                conn = get_db_connection()
+                cur = conn.cursor()
+                cur.execute("""
+                    SELECT user_email, platform, token_status, error_message, 
+                           facebook_user_id, exchange_timestamp, ip_address
+                    FROM token_exchange_logs
+                    ORDER BY exchange_timestamp DESC LIMIT 20
+                """)
+                logs = cur.fetchall()
+                if logs:
+                    for log in logs:
+                        if log[2] == "success":
+                            status_emoji = "✅"
+                        elif log[2] == "failed":
+                            status_emoji = "❌"
+                        else:
+                            status_emoji = "⏳"
+                        with st.expander(f"{status_emoji} {log[0]} | {log[1]} | {log[2]}"):
+                            st.write(f"**ID de Facebook:** {log[4]}")
+                            st.write(f"**Timestamp:** {log[5]}")
+                            st.write(f"**IP:** {log[6]}")
+                            if log[3]:
+                                st.error(f"**Error:** {log[3]}")
+                else:
+                    st.write("No hay registros de intercambios de tokens.")
+                cur.close()
+                conn.close()
+            except Exception as e:
+                st.error(f"Error al cargar auditoría: {e}")
+    
+    with tab3:
+        if st.button("🔄 Actualizar logs de errores de publicación"):
+            try:
+                conn = get_db_connection()
+                cur = conn.cursor()
+                cur.execute("""
+                    SELECT post_id, account_id, platform, publish_status, 
+                           error_details, retry_count, logged_at
+                    FROM post_publish_logs
+                    WHERE publish_status = 'failed'
+                    ORDER BY logged_at DESC LIMIT 20
+                """)
+                logs = cur.fetchall()
+                if logs:
+                    for log in logs:
+                        with st.expander(f"❌ Post ID: {log[0]} | {log[2]} | Intentos: {log[5]}"):
+                            st.write(f"**Cuenta ID:** {log[1]}")
+                            st.write(f"**Estado:** {log[3]}")
+                            st.write(f"**Fecha:** {log[6]}")
+                            if log[4]:
+                                st.error(f"**Detalles del Error:** {log[4]}")
+                else:
+                    st.write("No hay errores registrados.")
+                cur.close()
+                conn.close()
+            except Exception as e:
+                st.error(f"Error al cargar errores: {e}")
