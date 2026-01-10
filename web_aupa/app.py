@@ -46,7 +46,8 @@ def validate_facebook_token(access_token):
         return False, {"error": str(e)}
 
 def exchange_facebook_code(code):
-    """Realiza el intercambio del código de autorización por un access_token de Facebook."""
+    """Realiza el intercambio del código de autorización por un access_token de Facebook.
+    Primero obtiene el user token, luego obtiene el page access token para publicar."""
     try:
         fb_app_id = os.getenv("FACEBOOK_CLIENT_ID")
         fb_app_secret = os.getenv("FACEBOOK_CLIENT_SECRET")
@@ -55,6 +56,7 @@ def exchange_facebook_code(code):
         if not fb_app_id or not fb_app_secret:
             return None, "Faltan credenciales de Facebook en variables de entorno", "MISSING_CREDENTIALS"
         
+        # Paso 1: Obtener USER ACCESS TOKEN
         url = "https://graph.facebook.com/v18.0/oauth/access_token"
         params = {
             "client_id": fb_app_id,
@@ -65,23 +67,58 @@ def exchange_facebook_code(code):
         
         response = requests.get(url, params=params, timeout=10)
         
-        if response.status_code == 200:
-            data = response.json()
-            access_token = data.get("access_token")
-            expires_in = data.get("expires_in")
-            
-            # Validar el token obtenido
-            is_valid, user_data = validate_facebook_token(access_token)
-            if is_valid:
-                return access_token, None, None, expires_in, user_data
-            else:
-                error_msg = user_data.get("error", {}).get("message", "Token validation failed")
-                return None, error_msg, "VALIDATION_FAILED"
-        else:
+        if response.status_code != 200:
             error_data = response.json()
             error_msg = error_data.get("error", {}).get("message", "Unknown error")
             error_code = error_data.get("error", {}).get("code", "UNKNOWN")
             return None, error_msg, error_code
+        
+        user_token_data = response.json()
+        user_access_token = user_token_data.get("access_token")
+        expires_in = user_token_data.get("expires_in")
+        
+        # Validar el user token obtenido
+        is_valid, user_data = validate_facebook_token(user_access_token)
+        if not is_valid:
+            error_msg = user_data.get("error", {}).get("message", "Token validation failed")
+            return None, error_msg, "VALIDATION_FAILED"
+        
+        # Paso 2: Obtener PAGE ACCESS TOKEN para publicar
+        # Necesitamos obtener las páginas del usuario y un page token
+        pages_url = "https://graph.facebook.com/v18.0/me/accounts"
+        pages_params = {
+            "access_token": user_access_token,
+            "limit": 100
+        }
+        
+        pages_response = requests.get(pages_url, params=pages_params, timeout=10)
+        
+        if pages_response.status_code == 200:
+            pages_data = pages_response.json()
+            pages = pages_data.get("data", [])
+            
+            if pages:
+                # Usar la primera página disponible
+                page_token = pages[0].get("access_token")
+                page_id = pages[0].get("id")
+                page_name = pages[0].get("name")
+                
+                # Guardar info de la página en session
+                st.session_state.facebook_page_id = page_id
+                st.session_state.facebook_page_name = page_name
+                
+                # Retornar el PAGE TOKEN (es el que usaremos para publicar)
+                return page_token, None, None, expires_in, {
+                    "name": user_data.get("name"),
+                    "email": user_data.get("email"),
+                    "id": user_data.get("id"),
+                    "page_id": page_id,
+                    "page_name": page_name
+                }
+            else:
+                return None, "No se encontraron páginas. Asegúrate de que el usuario tenga acceso a páginas de Facebook", "NO_PAGES"
+        else:
+            return None, "No se pudieron obtener las páginas del usuario", "PAGES_ERROR"
             
     except requests.exceptions.Timeout:
         return None, "Timeout en conexión con Facebook", "TIMEOUT"
@@ -132,7 +169,7 @@ elif st.session_state.page == "home":
 
     with col1:
         fb_id = os.getenv("FACEBOOK_CLIENT_ID")
-        fb_url = f"https://www.facebook.com/v18.0/dialog/oauth?client_id={fb_id}&redirect_uri={REDIRECT_URI}&scope=pages_manage_posts,publish_video"
+        fb_url = f"https://www.facebook.com/v18.0/dialog/oauth?client_id={fb_id}&redirect_uri={REDIRECT_URI}&scope=email,user_friends,pages_read_engagement,pages_read_user_content&state=facebook"
         if st.link_button("🔵 Conectar Facebook", fb_url):
             st.session_state.last_platform = "Facebook"
 
